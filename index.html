@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VR180 Viewer</title>
+<style>
+  :root {
+    --bg: #111318; --panel: #1a1d24; --line: #2c313c; --text: #e8eaf0; --muted: #9aa1b2;
+    --accent: #4a7dff; --accent2: #2f5fe0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 14px; }
+  body { display: flex; overflow: hidden; }
+  #side { width: 360px; flex: none; height: 100%; overflow-y: auto; background: var(--panel);
+    border-right: 1px solid var(--line); padding: 16px; }
+  #view { flex: 1; position: relative; min-width: 0; }
+  #view canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #view canvas:active { cursor: grabbing; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; padding: 9px 14px;
+    border-radius: 8px; border: 1px solid var(--line); background: #252a34; color: var(--text);
+    cursor: pointer; font-size: 14px; user-select: none; }
+  .btn:hover { background: #2e3440; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); font-weight: 600; width: 100%; padding: 12px; font-size: 16px; }
+  .btn.primary:hover { background: var(--accent2); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.small { padding: 4px 8px; font-size: 12px; }
+  #xrMsg { color: var(--muted); font-size: 12px; margin: 6px 0 12px; }
+  #fileList { max-height: 200px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; }
+  #fileList:empty::before { content: "画像が選択されていません（ドラッグ＆ドロップも可）"; display: block; padding: 12px; color: var(--muted); font-size: 12px; }
+  #fileList div { padding: 6px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; border-bottom: 1px solid #22262f; }
+  #fileList div:hover { background: #232833; }
+  #fileList div.cur { background: #24345e; }
+  details { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; }
+  summary { padding: 10px 12px; cursor: pointer; font-weight: 600; }
+  details > div { padding: 4px 12px 12px; }
+  .field { display: grid; grid-template-columns: 96px 1fr 56px 24px; align-items: center; gap: 6px; margin: 6px 0; }
+  .field label { color: var(--muted); font-size: 12px; }
+  .field output { font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
+  .field input[type=range] { width: 100%; }
+  .field .rst { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; font-size: 14px; }
+  .sel { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 6px; margin: 6px 0; }
+  .sel label { color: var(--muted); font-size: 12px; }
+  select { background: #252a34; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px; }
+  .chk { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; }
+  .help { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .help b { color: var(--text); font-weight: 600; }
+  #info { position: absolute; left: 12px; bottom: 12px; background: rgba(0,0,0,.55); padding: 6px 10px;
+    border-radius: 6px; font-size: 12px; pointer-events: none; max-width: calc(100% - 24px); }
+  #drop { position: absolute; inset: 0; background: rgba(74,125,255,.25); border: 3px dashed var(--accent);
+    display: none; align-items: center; justify-content: center; font-size: 20px; pointer-events: none; }
+  body.dragging #drop { display: flex; }
+  @media (max-width: 760px) {
+    body { flex-direction: column; overflow: auto; }
+    #side { width: 100%; height: auto; border-right: none; }
+    #view { height: 60vh; flex: none; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="side">
+  <h1>VR180 SBS Viewer</h1>
+  <div class="row">
+    <label class="btn">画像を開く<input type="file" id="fileInput" accept="image/*" multiple hidden></label>
+    <label class="btn">フォルダを開く<input type="file" id="dirInput" webkitdirectory multiple hidden></label>
+  </div>
+  <button id="vrBtn" class="btn primary" disabled>VRで見る</button>
+  <div id="xrMsg">WebXR を確認中…</div>
+  <div class="row">
+    <button class="btn small" id="prevBtn">◀ 前へ</button>
+    <button class="btn small" id="nextBtn">次へ ▶</button>
+    <button class="btn small" id="viewResetBtn">視点リセット</button>
+  </div>
+  <div id="fileList"></div>
+
+  <details open>
+    <summary>表示設定</summary>
+    <div id="controls"></div>
+  </details>
+
+  <details>
+    <summary>操作方法</summary>
+    <div class="help">
+      <p><b>Quest コントローラー</b><br>
+      右スティック 左右：前／次の画像<br>
+      右スティック 上下：ズーム（球面）／距離（平面）<br>
+      左スティック 左右：シフト（輻輳調整）<br>
+      左スティック 上下：上下ズレ補正<br>
+      A / Y：メニュー表示切替<br>
+      B：逆視（左右入れ替え）<br>
+      X：リセンター（正面を合わせる）<br>
+      グリップを握って動かす：表示位置をつかんで移動<br>
+      トリガー：メニュー操作（何もない所でメニュー開閉）</p>
+      <p><b>ハンドトラッキング</b><br>ピンチでメニュー操作／何もない所でピンチするとメニュー開閉</p>
+      <p><b>PC</b><br>ドラッグで見回し、ホイールで画角、← → で前後の画像、S で逆視</p>
+    </div>
+  </details>
+</div>
+<div id="view">
+  <div id="info">画像を開いてください</div>
+  <div id="drop">ここに画像をドロップ</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+
+/* ---------------- 設定 ---------------- */
+const SKEY = 'vr180viewer.settings.v1';
+// mode: 'sphere' = 正距円筒/魚眼のみ, 'flat' = 平面のみ, 'all' = 共通
+const PARAMS = [
+  { key: 'shift',     label: 'シフト(輻輳)', unit: '°', min: -10, max: 10, step: 0.05, vstep: 0.25, def: 0, mode: 'all' },
+  { key: 'vshift',    label: '上下ズレ補正', unit: '°', min: -5, max: 5, step: 0.05, vstep: 0.1, def: 0, mode: 'all' },
+  { key: 'zoom',      label: 'ズーム', unit: 'x', min: 0.5, max: 3, step: 0.01, vstep: 0.05, def: 1, mode: 'sphere' },
+  { key: 'fov',       label: '撮影画角', unit: '°', min: 120, max: 360, step: 1, vstep: 5, def: 180, mode: 'sphere' },
+  { key: 'offset',    label: '前後位置', unit: 'm', min: -8, max: 8, step: 0.1, vstep: 0.25, def: 0, mode: 'sphere' },
+  { key: 'flatDist',  label: '距離', unit: 'm', min: 0.5, max: 30, step: 0.05, vstep: 0.25, def: 3, mode: 'flat' },
+  { key: 'flatSize',  label: '画面幅', unit: 'm', min: 0.3, max: 30, step: 0.05, vstep: 0.25, def: 3, mode: 'flat' },
+  { key: 'flatHeight',label: '高さ', unit: 'm', min: -5, max: 5, step: 0.05, vstep: 0.1, def: 0, mode: 'flat' },
+  { key: 'yaw',       label: '左右の向き', unit: '°', min: -180, max: 180, step: 1, vstep: 5, def: 0, mode: 'all' },
+  { key: 'pitch',     label: '上下の向き', unit: '°', min: -90, max: 90, step: 1, vstep: 2, def: 0, mode: 'all' },
+  { key: 'roll',      label: '傾き', unit: '°', min: -45, max: 45, step: 0.5, vstep: 1, def: 0, mode: 'all' },
+  { key: 'bright',    label: '明るさ', unit: '', min: 0.2, max: 2, step: 0.01, vstep: 0.05, def: 1, mode: 'all' },
+  { key: 'contrast',  label: 'コントラスト', unit: '', min: 0.2, max: 2, step: 0.01, vstep: 0.05, def: 1, mode: 'all' },
+  { key: 'sat',       label: '彩度', unit: '', min: 0, max: 2, step: 0.01, vstep: 0.05, def: 1, mode: 'all' },
+  { key: 'slideshow', label: 'スライドショー', unit: '秒', min: 0, max: 60, step: 1, vstep: 1, def: 0, mode: 'all' },
+];
+const PMAP = Object.fromEntries(PARAMS.map(p => [p.key, p]));
+const PROJ = { equirect: '正距円筒', fisheye: '魚眼', flat: '平面' };
+const LAYOUT = { sbs: '左右(SBS)', tb: '上下(TB)', mono: 'モノ' };
+const DEFAULTS = {
+  ...Object.fromEntries(PARAMS.map(p => [p.key, p.def])),
+  proj: 'equirect', layout: 'sbs', swap: false, lock3dof: true, autoLayout: true,
+  quality: 1.25, previewEye: 'L',
+};
+const S = { ...DEFAULTS };
+try { Object.assign(S, JSON.parse(localStorage.getItem(SKEY) || '{}')); } catch {}
+
+let saveTimer = 0;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { localStorage.setItem(SKEY, JSON.stringify(S)); } catch {} }, 400);
+}
+const decimals = s => (String(s).split('.')[1] || '').length;
+function setParam(key, v) {
+  const p = PMAP[key];
+  v = Math.min(p.max, Math.max(p.min, v));
+  S[key] = +(Math.round(v / p.step) * p.step).toFixed(decimals(p.step));
+}
+const isSphere = () => S.proj !== 'flat';
+const paramVisible = p => p.mode === 'all' || (p.mode === 'sphere') === isSphere();
+const fmt = p => S[p.key].toFixed(Math.min(2, decimals(p.vstep))) + p.unit;
+
+/* ---------------- レンダラ / シーン ---------------- */
+const view = document.getElementById('view');
+const infoEl = document.getElementById('info');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local');
+view.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+const camera = new THREE.PerspectiveCamera(80, 1, 0.01, 200);
+scene.add(camera);
+
+const content = new THREE.Group();
+scene.add(content);
+
+const VS = /* glsl */`
+varying vec3 vDir;
+varying vec2 vUv;
+void main() {
+  vDir = position;
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+const FS = /* glsl */`
+uniform sampler2D map;
+uniform float hasMap;
+uniform int proj;          // 0 正距円筒, 1 魚眼(等距離射影), 2 平面
+uniform vec4 rect;         // テクスチャ内のこの目の領域 (x, y, w, h)
+uniform float halfFov;
+uniform float zoom;
+uniform vec2 uvShift;
+uniform float bright;
+uniform float contrast;
+uniform float sat;
+varying vec3 vDir;
+varying vec2 vUv;
+const float PI = 3.141592653589793;
+void main() {
+  vec2 uv;
+  if (proj == 2) {
+    uv = vUv + uvShift;
+  } else {
+    vec3 d = normalize(vDir);
+    if (proj == 0) {
+      float lon = atan(d.x, -d.z) / zoom;
+      float lat = asin(clamp(d.y, -1.0, 1.0)) / zoom;
+      uv = vec2(lon / (2.0 * halfFov) + 0.5, lat / PI + 0.5);
+    } else {
+      float th = acos(clamp(-d.z, -1.0, 1.0)) / zoom;
+      float l = length(d.xy);
+      vec2 dir2 = l > 1e-6 ? d.xy / l : vec2(0.0);
+      uv = 0.5 + 0.5 * (th / halfFov) * dir2;
+    }
+  }
+  if (hasMap < 0.5 || uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+  } else {
+    vec3 c = texture2D(map, rect.xy + clamp(uv, 0.0005, 0.9995) * rect.zw).rgb;
+    c = (c - 0.5) * contrast + 0.5;
+    c *= bright;
+    float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = mix(vec3(g), c, sat);
+    gl_FragColor = vec4(max(c, 0.0), 1.0);
+  }
+  #include <colorspace_fragment>
+}`;
+
+function makeMat(side) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: null }, hasMap: { value: 0 }, proj: { value: 0 },
+      rect: { value: new THREE.Vector4(0, 0, 0.5, 1) }, halfFov: { value: Math.PI / 2 },
+      zoom: { value: 1 }, uvShift: { value: new THREE.Vector2() },
+      bright: { value: 1 }, contrast: { value: 1 }, sat: { value: 1 },
+    },
+    vertexShader: VS, fragmentShader: FS, side, depthWrite: false,
+  });
+}
+
+const R = 10;
+const sphereGeo = new THREE.SphereGeometry(R, 128, 64);
+const planeGeo = new THREE.PlaneGeometry(1, 1);
+// 左目 = レイヤー1, 右目 = レイヤー2（WebXR の各目カメラが自動で有効化する）
+const eyes = [0, 1].map(i => {
+  const sphere = new THREE.Mesh(sphereGeo, makeMat(THREE.BackSide));
+  const plane = new THREE.Mesh(planeGeo, makeMat(THREE.FrontSide));
+  sphere.layers.set(i + 1);
+  plane.layers.set(i + 1);
+  content.add(sphere, plane);
+  return { sphere, plane };
+});
+function setPreviewLayers() {
+  camera.layers.disable(1); camera.layers.disable(2);
+  if (!renderer.xr.isPresenting) camera.layers.enable(S.previewEye === 'R' ? 2 : 1);
+}
+
+/* ---------------- 画像 ---------------- */
+let files = [];
+let idx = -1;
+let loadToken = 0;
+const img = { tex: null, w: 1, h: 1, name: '' };
+let preload = null; // { file, promise }
+
+function decodeFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => { URL.revokeObjectURL(url); resolve(im); };
+    im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めません: ' + file.name)); };
+    im.src = url;
+  });
+}
+
+function rectFor(src) {
+  if (S.layout === 'mono') return [0, 0, 1, 1];
+  if (S.layout === 'tb') return src === 0 ? [0, 0.5, 1, 0.5] : [0, 0, 1, 0.5]; // 上 = 左目
+  return [src * 0.5, 0, 0.5, 1];
+}
+
+async function loadIndex(i) {
+  if (!files.length) return;
+  idx = ((i % files.length) + files.length) % files.length;
+  const file = files[idx];
+  const token = ++loadToken;
+  setStatus('読み込み中… ' + file.name);
+  updateFileList();
+  try {
+    const im = await (preload && preload.file === file ? preload.promise : decodeFile(file));
+    if (token !== loadToken) return;
+    let source = im, w = im.naturalWidth, h = im.naturalHeight;
+    const max = renderer.capabilities.maxTextureSize;
+    if (w > max || h > max) {
+      const s = Math.min(max / w, max / h);
+      const cv = document.createElement('canvas');
+      cv.width = Math.floor(w * s); cv.height = Math.floor(h * s);
+      cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+      source = cv;
+    }
+    const tex = new THREE.Texture(source);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.needsUpdate = true;
+    renderer.initTexture(tex);
+    if (img.tex) img.tex.dispose();
+    Object.assign(img, { tex, w, h, name: file.name });
+    if (S.autoLayout) {
+      const a = w / h;
+      if (a >= 1.5) S.layout = 'sbs';
+      else if (a <= 0.75) S.layout = 'tb';
+    }
+    changed();
+    setStatus(`${idx + 1}/${files.length}  ${file.name}  (${w}×${h})`);
+    if (renderer.xr.isPresenting && !panel.visible) toast(`${idx + 1}/${files.length}  ${file.name}`);
+    slideTimer = 0;
+    // 次の画像を先読み
+    if (files.length > 1) {
+      const nf = files[(idx + 1) % files.length];
+      if (!preload || preload.file !== nf) preload = { file: nf, promise: decodeFile(nf).catch(() => null) };
+    }
+  } catch (e) {
+    if (token === loadToken) setStatus(e.message);
+  }
+}
+const step = d => { if (files.length) loadIndex(idx + d); };
+
+function setFiles(list) {
+  const imgs = [...list].filter(f => f.type.startsWith('image/') || /\.(jpe?g|png|webp|avif|gif|bmp)$/i.test(f.name));
+  if (!imgs.length) return;
+  imgs.sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, undefined, { numeric: true }));
+  files = imgs; preload = null;
+  loadIndex(0);
+}
+
+/* ---------------- 適用 ---------------- */
+const d2r = THREE.MathUtils.degToRad;
+function apply() {
+  content.rotation.set(d2r(S.pitch), d2r(S.yaw), d2r(S.roll), 'YXZ');
+  const projId = { equirect: 0, fisheye: 1, flat: 2 }[S.proj];
+  eyes.forEach((e, i) => {
+    const sign = i === 0 ? 1 : -1;
+    const src = S.swap ? 1 - i : i;
+    const r = rectFor(src);
+    for (const m of [e.sphere, e.plane]) {
+      const u = m.material.uniforms;
+      u.map.value = img.tex; u.hasMap.value = img.tex ? 1 : 0;
+      u.rect.value.set(...r); u.proj.value = projId;
+      u.halfFov.value = d2r(S.fov) / 2; u.zoom.value = S.zoom;
+      u.bright.value = S.bright; u.contrast.value = S.contrast; u.sat.value = S.sat;
+    }
+    e.sphere.visible = isSphere();
+    e.plane.visible = !isSphere();
+    // シフト正 = 左目像を左へ、右目像を右へ（奥へ）
+    e.sphere.rotation.set(d2r(sign * S.vshift / 2), d2r(sign * S.shift / 2), 0, 'YXZ');
+    e.sphere.position.set(0, 0, -S.offset);
+    e.plane.material.uniforms.uvShift.value.set(sign * S.shift / 360, -sign * S.vshift / 360);
+    const aspect = (img.w * r[2]) / (img.h * r[3]);
+    e.plane.scale.set(S.flatSize, S.flatSize / aspect, 1);
+    e.plane.position.set(0, S.flatHeight, -S.flatDist);
+  });
+}
+
+function changed() {
+  apply();
+  syncForm();
+  panelDirty = true;
+  save();
+}
+
+/* ---------------- 2D UI ---------------- */
+const controlsEl = document.getElementById('controls');
+const formRefs = {};
+function buildForm() {
+  const sel = (key, label, opts) => {
+    const d = document.createElement('div'); d.className = 'sel';
+    d.innerHTML = `<label>${label}</label><select>${Object.entries(opts).map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+    const s = d.querySelector('select');
+    s.onchange = () => { S[key] = isNaN(+s.value) ? s.value : +s.value; if (key === 'layout') S.autoLayout = false; if (key === 'previewEye') setPreviewLayers(); changed(); };
+    formRefs[key] = { el: d, input: s };
+    controlsEl.append(d);
+  };
+  const chk = (key, label) => {
+    const d = document.createElement('label'); d.className = 'chk';
+    d.innerHTML = `<input type="checkbox"> ${label}`;
+    const c = d.querySelector('input');
+    c.onchange = () => { S[key] = c.checked; changed(); };
+    formRefs[key] = { el: d, input: c };
+    controlsEl.append(d);
+  };
+  sel('proj', '投影方式', PROJ);
+  sel('layout', '配置', LAYOUT);
+  chk('swap', '逆視（左右の目を入れ替え）');
+  chk('autoLayout', '縦横比から配置を自動判定');
+  chk('lock3dof', '頭の移動に追従（3DoF固定）');
+  for (const p of PARAMS) {
+    const d = document.createElement('div'); d.className = 'field';
+    d.innerHTML = `<label>${p.label}</label><input type="range" min="${p.min}" max="${p.max}" step="${p.step}"><output></output><button class="rst" title="初期値に戻す">↺</button>`;
+    const r = d.querySelector('input');
+    r.oninput = () => { setParam(p.key, +r.value); changed(); };
+    d.querySelector('button').onclick = () => { S[p.key] = p.def; changed(); };
+    formRefs[p.key] = { el: d, input: r, out: d.querySelector('output') };
+    controlsEl.append(d);
+  }
+  sel('quality', 'VR解像度', { 1: '標準 (1.0x)', 1.25: '高 (1.25x)', 1.5: '最高 (1.5x)' });
+  sel('previewEye', 'プレビュー', { L: '左目', R: '右目' });
+  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '10px';
+  row.innerHTML = '<button class="btn small">すべての設定をリセット</button>';
+  row.querySelector('button').onclick = resetAll;
+  controlsEl.append(row);
+}
+function syncForm() {
+  for (const [key, ref] of Object.entries(formRefs)) {
+    if (ref.input.type === 'checkbox') ref.input.checked = !!S[key];
+    else if (document.activeElement !== ref.input) ref.input.value = S[key];
+    if (ref.out) ref.out.textContent = fmt(PMAP[key]);
+    if (PMAP[key]) ref.el.style.display = paramVisible(PMAP[key]) ? '' : 'none';
+  }
+}
+function resetAll() {
+  const keep = { quality: S.quality, previewEye: S.previewEye };
+  Object.assign(S, DEFAULTS, keep);
+  changed();
+}
+
+const fileListEl = document.getElementById('fileList');
+function updateFileList() {
+  if (fileListEl.childElementCount !== files.length) {
+    fileListEl.innerHTML = '';
+    files.forEach((f, i) => {
+      const d = document.createElement('div');
+      d.textContent = f.webkitRelativePath || f.name;
+      d.onclick = () => loadIndex(i);
+      fileListEl.append(d);
+    });
+  }
+  [...fileListEl.children].forEach((d, i) => d.classList.toggle('cur', i === idx));
+  fileListEl.children[idx]?.scrollIntoView({ block: 'nearest' });
+}
+function setStatus(t) { infoEl.textContent = t; statusText = t; panelDirty = true; }
+
+document.getElementById('fileInput').onchange = e => setFiles(e.target.files);
+document.getElementById('dirInput').onchange = e => setFiles(e.target.files);
+document.getElementById('prevBtn').onclick = () => step(-1);
+document.getElementById('nextBtn').onclick = () => step(1);
+document.getElementById('viewResetBtn').onclick = () => { look.lon = 0; look.lat = 0; camera.fov = 80; camera.updateProjectionMatrix(); };
+
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('dragging'); setFiles(e.dataTransfer.files); });
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'ArrowRight') step(1);
+  else if (e.key === 'ArrowLeft') step(-1);
+  else if (e.key === 's' || e.key === 'S') { S.swap = !S.swap; changed(); }
+});
+
+// PC プレビューの見回し
+const look = { lon: 0, lat: 0, drag: null };
+renderer.domElement.addEventListener('pointerdown', e => { look.drag = { x: e.clientX, y: e.clientY }; renderer.domElement.setPointerCapture(e.pointerId); });
+renderer.domElement.addEventListener('pointermove', e => {
+  if (!look.drag) return;
+  const k = camera.fov / renderer.domElement.clientHeight;
+  look.lon += (e.clientX - look.drag.x) * k;
+  look.lat = Math.max(-89, Math.min(89, look.lat + (e.clientY - look.drag.y) * k));
+  look.drag = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener('pointerup', () => { look.drag = null; });
+renderer.domElement.addEventListener('wheel', e => {
+  e.preventDefault();
+  camera.fov = Math.max(20, Math.min(120, camera.fov + e.deltaY * 0.05));
+  camera.updateProjectionMatrix();
+}, { passive: false });
+
+function resize() {
+  if (renderer.xr.isPresenting) return;
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(view);
+
+/* ---------------- VR 内メニュー（Canvas パネル） ---------------- */
+const PW = 1024, PH = 1280;
+const pcanvas = document.createElement('canvas');
+pcanvas.width = PW; pcanvas.height = PH;
+const pctx = pcanvas.getContext('2d');
+const ptex = new THREE.CanvasTexture(pcanvas);
+ptex.colorSpace = THREE.SRGBColorSpace;
+ptex.anisotropy = 8;
+const PANEL_W = 0.8;
+const panel = new THREE.Mesh(
+  new THREE.PlaneGeometry(PANEL_W, PANEL_W * PH / PW),
+  new THREE.MeshBasicMaterial({ map: ptex, transparent: true, depthTest: false, depthWrite: false })
+);
+panel.renderOrder = 10;
+panel.visible = false;
+scene.add(panel);
+
+let buttons = [];
+let hoverIds = new Set();
+let panelDirty = true;
+let statusText = '';
+
+function drawPanel() {
+  const c = pctx;
+  buttons = [];
+  c.clearRect(0, 0, PW, PH);
+  c.fillStyle = 'rgba(18,20,26,0.93)';
+  c.beginPath(); c.roundRect(0, 0, PW, PH, 36); c.fill();
+  c.textBaseline = 'middle';
+
+  const btn = (id, x, y, w, h, label, fn, { repeat = false, active = false, size = 34 } = {}) => {
+    buttons.push({ id, x, y, w, h, fn, repeat });
+    c.fillStyle = hoverIds.has(id) ? '#4a7dff' : active ? '#2d4c9a' : '#2b303b';
+    c.beginPath(); c.roundRect(x, y, w, h, 14); c.fill();
+    c.fillStyle = '#fff'; c.font = `600 ${size}px sans-serif`; c.textAlign = 'center';
+    c.fillText(label, x + w / 2, y + h / 2 + 1, w - 16);
+  };
+
+  const RH = 68;
+  let y = 24;
+  btn('prev', 24, y, 110, RH - 6, '◀', () => step(-1), { size: 38 });
+  btn('next', PW - 134, y, 110, RH - 6, '▶', () => step(1), { size: 38 });
+  c.fillStyle = '#fff'; c.font = '600 30px sans-serif'; c.textAlign = 'center';
+  c.fillText(files.length ? `${idx + 1} / ${files.length}` : '画像なし', PW / 2, y + 18, 700);
+  c.fillStyle = '#9aa1b2'; c.font = '24px sans-serif';
+  c.fillText(img.name || '2D画面で画像を選んでからVRに入ってください', PW / 2, y + 48, 700);
+  y += RH + 8;
+
+  for (const p of PARAMS) {
+    if (!paramVisible(p)) continue;
+    c.fillStyle = '#c9cede'; c.font = '30px sans-serif'; c.textAlign = 'left';
+    c.fillText(p.label, 36, y + RH / 2 - 3, 400);
+    btn(p.key + '-', 450, y, 110, RH - 10, '−', () => { setParam(p.key, S[p.key] - p.vstep); changed(); }, { repeat: true, size: 42 });
+    c.fillStyle = '#fff'; c.font = '600 32px sans-serif'; c.textAlign = 'center';
+    c.fillText(fmt(p), 680, y + RH / 2 - 4, 220);
+    btn(p.key + '+', 800, y, 110, RH - 10, '+', () => { setParam(p.key, S[p.key] + p.vstep); changed(); }, { repeat: true, size: 42 });
+    btn(p.key + '0', 920, y, 80, RH - 10, '↺', () => { S[p.key] = p.def; changed(); }, { size: 30 });
+    y += RH;
+  }
+
+  y += 10;
+  const cycle = (obj, key) => { const k = Object.keys(obj); S[key] = k[(k.indexOf(S[key]) + 1) % k.length]; if (key === 'layout') S.autoLayout = false; changed(); };
+  const toggles = [
+    ['swap', '逆視: ' + (S.swap ? 'ON' : 'OFF'), () => { S.swap = !S.swap; changed(); }, S.swap],
+    ['proj', PROJ[S.proj], () => cycle(PROJ, 'proj')],
+    ['layout', LAYOUT[S.layout], () => cycle(LAYOUT, 'layout')],
+    ['recenter', 'リセンター', () => recenter()],
+    ['lock', '3DoF固定: ' + (S.lock3dof ? 'ON' : 'OFF'), () => { S.lock3dof = !S.lock3dof; anchor.copy(headPos); changed(); }, S.lock3dof],
+    ['reset', '全リセット', resetAll],
+    ['close', 'メニューを閉じる', () => showMenu(false)],
+    ['exit', 'VR終了', () => renderer.xr.getSession()?.end()],
+  ];
+  const cols = 3, gap = 12, bw = (PW - 48 - gap * (cols - 1)) / cols;
+  toggles.forEach(([id, label, fn, active], i) => {
+    btn(id, 24 + (i % cols) * (bw + gap), y + Math.floor(i / cols) * (RH + 4), bw, RH - 6, label, fn, { active, size: 30 });
+  });
+  y += Math.ceil(toggles.length / cols) * (RH + 4) + 6;
+
+  c.fillStyle = '#7d8496'; c.font = '22px sans-serif'; c.textAlign = 'center';
+  c.fillText('右スティック:前/次・ズーム  左スティック:シフト・上下  B:逆視  X:リセンター  グリップ:移動', PW / 2, Math.min(PH - 24, y + 14), PW - 40);
+  ptex.needsUpdate = true;
+}
+
+/* ---------------- トースト ---------------- */
+const tcanvas = document.createElement('canvas');
+tcanvas.width = 1024; tcanvas.height = 112;
+const ttex = new THREE.CanvasTexture(tcanvas);
+ttex.colorSpace = THREE.SRGBColorSpace;
+const toastMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7 * 112 / 1024),
+  new THREE.MeshBasicMaterial({ map: ttex, transparent: true, depthTest: false, depthWrite: false }));
+toastMesh.renderOrder = 11; toastMesh.visible = false;
+scene.add(toastMesh);
+let toastUntil = 0;
+function toast(text) {
+  const c = tcanvas.getContext('2d');
+  c.clearRect(0, 0, 1024, 112);
+  c.fillStyle = 'rgba(0,0,0,0.7)'; c.beginPath(); c.roundRect(0, 0, 1024, 112, 28); c.fill();
+  c.fillStyle = '#fff'; c.font = '600 40px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(text, 512, 58, 980);
+  ttex.needsUpdate = true;
+  placeInFront(toastMesh, 1.2, -0.25);
+  toastMesh.visible = true;
+  toastUntil = performance.now() + 1600;
+}
+
+/* ---------------- XR ---------------- */
+const headPos = new THREE.Vector3();
+const headQuat = new THREE.Quaternion();
+const anchor = new THREE.Vector3();
+let firstFrame = false;
+
+function headYaw() {
+  const f = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
+  return Math.atan2(-f.x, -f.z);
+}
+function placeInFront(obj, dist, down) {
+  const yaw = headYaw();
+  obj.position.set(headPos.x - Math.sin(yaw) * dist, headPos.y + down, headPos.z - Math.cos(yaw) * dist);
+  obj.lookAt(headPos.x, headPos.y + down, headPos.z);
+}
+function recenter() {
+  S.yaw = +THREE.MathUtils.radToDeg(headYaw()).toFixed(0);
+  S.pitch = 0;
+  anchor.copy(headPos);
+  changed();
+  if (panel.visible) placeInFront(panel, 1.0, -0.1);
+}
+function showMenu(on) {
+  panel.visible = on;
+  if (on) { placeInFront(panel, 1.0, -0.1); panelDirty = true; }
+}
+
+const vrBtn = document.getElementById('vrBtn');
+const xrMsg = document.getElementById('xrMsg');
+if (navigator.xr) {
+  navigator.xr.isSessionSupported('immersive-vr').then(ok => {
+    vrBtn.disabled = !ok;
+    xrMsg.textContent = ok ? 'Quest のブラウザで「VRで見る」を押してください' : 'この端末は WebXR (immersive-vr) に対応していません。プレビューのみ利用できます。';
+  });
+} else {
+  xrMsg.textContent = window.isSecureContext ? 'WebXR 非対応のブラウザです（プレビューのみ）' : 'WebXR には HTTPS（または localhost）での配信が必要です';
+}
+vrBtn.onclick = async () => {
+  try {
+    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'hand-tracking'] });
+    renderer.xr.setFramebufferScaleFactor(+S.quality || 1);
+    await renderer.xr.setSession(session);
+    renderer.xr.setFoveation(0);
+    S.yaw = 0;
+    firstFrame = true;
+    setPreviewLayers();
+    changed();
+    session.addEventListener('end', () => {
+      panel.visible = false; toastMesh.visible = false;
+      content.position.set(0, 0, 0);
+      setPreviewLayers();
+      resize();
+    });
+  } catch (e) {
+    xrMsg.textContent = 'VR開始に失敗: ' + e.message;
+  }
+};
+
+// コントローラー
+const raycaster = new THREE.Raycaster();
+const modelFactory = new XRControllerModelFactory();
+const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
+const controllers = [0, 1].map(i => {
+  const c = renderer.xr.getController(i);
+  const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x8fb0ff, transparent: true, opacity: 0.8 }));
+  line.scale.z = 3;
+  c.add(line);
+  const cursor = new THREE.Mesh(new THREE.CircleGeometry(0.008, 16), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false }));
+  cursor.renderOrder = 12; cursor.visible = false;
+  scene.add(cursor);
+  c.userData = { line, cursor, src: null, hover: null, press: null, drag: null, prevBtns: [], latched: false };
+  c.addEventListener('connected', e => { c.userData.src = e.data; line.visible = e.data.targetRayMode !== 'gaze'; });
+  c.addEventListener('disconnected', () => { c.userData.src = null; cursor.visible = false; });
+  c.addEventListener('selectstart', () => {
+    const b = c.userData.hover;
+    if (b) {
+      b.fn(); pulse(c);
+      const t = performance.now();
+      c.userData.press = { b, t, last: t };
+    } else if (renderer.xr.isPresenting) {
+      showMenu(!panel.visible);
+    }
+  });
+  c.addEventListener('selectend', () => { c.userData.press = null; });
+  c.addEventListener('squeezestart', () => {
+    c.userData.drag = { q0: c.quaternion.clone().invert(), c0: content.quaternion.clone() };
+  });
+  c.addEventListener('squeezeend', () => { c.userData.drag = null; });
+  scene.add(c);
+  const grip = renderer.xr.getControllerGrip(i);
+  grip.add(modelFactory.createControllerModel(grip));
+  scene.add(grip);
+  return c;
+});
+function pulse(c, v = 0.3, ms = 20) {
+  try { c.userData.src?.gamepad?.hapticActuators?.[0]?.pulse(v, ms); } catch {}
+}
+
+function updatePointers(now) {
+  const newHover = new Set();
+  for (const c of controllers) {
+    const u = c.userData;
+    u.hover = null;
+    u.cursor.visible = false;
+    u.line.scale.z = 3;
+    if (!u.src || !panel.visible) continue;
+    raycaster.setFromXRController(c);
+    const hit = raycaster.intersectObject(panel)[0];
+    if (!hit) continue;
+    const x = hit.uv.x * PW, y = (1 - hit.uv.y) * PH;
+    u.hover = buttons.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) || null;
+    if (u.hover) newHover.add(u.hover.id);
+    u.line.scale.z = hit.distance;
+    u.cursor.visible = true;
+    u.cursor.position.copy(hit.point);
+    u.cursor.quaternion.copy(panel.quaternion);
+    // 長押しリピート
+    const p = u.press;
+    if (p && p.b.repeat && u.hover?.id === p.b.id && now - p.t > 400 && now - p.last > 70) {
+      p.b.fn(); p.last = now;
+    }
+  }
+  if (newHover.size !== hoverIds.size || [...newHover].some(id => !hoverIds.has(id))) {
+    hoverIds = newHover; panelDirty = true;
+  }
+}
+
+const tmpQ = new THREE.Quaternion();
+const tmpE = new THREE.Euler();
+function updateInput(dt) {
+  let dirty = false;
+  for (const c of controllers) {
+    const u = c.userData;
+    // グリップでつかんで移動
+    if (u.drag) {
+      tmpQ.copy(c.quaternion).multiply(u.drag.q0).multiply(u.drag.c0);
+      tmpE.setFromQuaternion(tmpQ, 'YXZ');
+      S.yaw = THREE.MathUtils.radToDeg(tmpE.y);
+      S.pitch = Math.max(-90, Math.min(90, THREE.MathUtils.radToDeg(tmpE.x)));
+      dirty = true;
+    }
+    const gp = u.src?.gamepad;
+    if (!gp) continue;
+    const ax = gp.axes, bt = gp.buttons;
+    const x = ax[2] || 0, y = ax[3] || 0;
+    const down = i => bt[i]?.pressed && !u.prevBtns[i];
+    if (u.src.handedness === 'right') {
+      if (!u.latched && Math.abs(x) > 0.7) { step(x > 0 ? 1 : -1); u.latched = true; pulse(c); }
+      if (Math.abs(x) < 0.3) u.latched = false;
+      if (Math.abs(y) > 0.2 && Math.abs(y) > Math.abs(x)) {
+        if (isSphere()) setParam('zoom', S.zoom * (1 - y * dt * 0.8));
+        else setParam('flatDist', S.flatDist * (1 - y * dt * 0.8));
+        dirty = true;
+      }
+      if (down(4)) showMenu(!panel.visible);
+      if (down(5)) { S.swap = !S.swap; dirty = true; toast('逆視: ' + (S.swap ? 'ON' : 'OFF')); }
+    } else {
+      if (Math.abs(x) > 0.2 && Math.abs(x) > Math.abs(y)) { S.shift = Math.max(-10, Math.min(10, S.shift + x * dt * 2)); dirty = true; }
+      if (Math.abs(y) > 0.2 && Math.abs(y) > Math.abs(x)) { S.vshift = Math.max(-5, Math.min(5, S.vshift - y * dt * 0.8)); dirty = true; }
+      if (down(4)) { recenter(); toast('リセンター'); }
+      if (down(5)) showMenu(!panel.visible);
+    }
+    u.prevBtns = bt.map(b => b.pressed);
+  }
+  if (dirty) changed();
+}
+
+/* ---------------- ループ ---------------- */
+let last = performance.now();
+let lastPanelDraw = 0;
+let slideTimer = 0;
+renderer.setAnimationLoop((t, frame) => {
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+
+  if (frame) {
+    const pose = frame.getViewerPose(renderer.xr.getReferenceSpace());
+    if (pose) {
+      const p = pose.transform.position, o = pose.transform.orientation;
+      headPos.set(p.x, p.y, p.z);
+      headQuat.set(o.x, o.y, o.z, o.w);
+      if (firstFrame) { firstFrame = false; anchor.copy(headPos); showMenu(true); }
+    }
+    content.position.copy(S.lock3dof ? headPos : anchor);
+    updateInput(dt);
+    updatePointers(now);
+    if (toastMesh.visible && now > toastUntil) toastMesh.visible = false;
+    if (panel.visible && panelDirty && now - lastPanelDraw > 60) {
+      drawPanel(); panelDirty = false; lastPanelDraw = now;
+    }
+  } else {
+    camera.rotation.set(d2r(look.lat), d2r(look.lon), 0, 'YXZ');
+  }
+
+  if (S.slideshow > 0 && files.length > 1) {
+    slideTimer += dt;
+    if (slideTimer >= S.slideshow) { slideTimer = 0; step(1); }
+  }
+  renderer.render(scene, camera);
+});
+
+buildForm();
+setPreviewLayers();
+changed();
+resize();
+</script>
+</body>
+</html>
